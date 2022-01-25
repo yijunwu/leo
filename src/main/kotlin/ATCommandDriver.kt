@@ -42,7 +42,7 @@ object ATCommandDriver {
 
     @Volatile
     private var m_ErrorCount = 0
-    private const val N = 1000
+    private const val N = 100
 
     private val m_ReceiveBuffer = ByteArray(10000)
 
@@ -88,66 +88,14 @@ object ATCommandDriver {
             m_ReceiveBuffer[m_BytesReceived++] = b
             if (b == '\n'.code.toByte()) {
                 //System.out.print("Received: " + new String(linebuf, 0, inp));
-                var s = 0
-                var j: Int
-                j = 0
-                while (j < m_BytesReceived - 2) {
-                    s += m_ReceiveBuffer.get(j)
-                    j++
-                }
-                val cb = (32 + (s and 63)).toByte()
-                if (cb != m_ReceiveBuffer.get(j) && m_RxCount > 0) {
-                    println("check sum failure")
-                    m_ErrorCount++
-                }
                 m_RxCount++
                 m_BytesReceived = 0
             }
         }
     }
 
-    fun run(speed: Int) {
-        try {
-            var m_Done = false
-            rnd = Random()
-            m_BytesReceived = 0
-            m_TotalReceived = 0
-            m_TxCount = 0
-            m_RxCount = 0
-            m_ErrorCount = 0
-            openPort(m_TestPortName)
-            m_Port!!.notifyOnDataAvailable(true)
-            m_Port!!.notifyOnOutputEmpty(true)
-            m_Port!!.setFlowControlMode(SerialPort.FLOWCONTROL_XONXOFF_IN + SerialPort.FLOWCONTROL_XONXOFF_OUT)
-            m_Port!!.setSerialPortParams(speed, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE)
-            val stop = booleanArrayOf(false)
-            val m_T0 = System.currentTimeMillis()
-
-            m_Port!!.addEventListener(eventListener)
-            while (!m_Done) {
-                try {
-                    Thread.sleep(100)
-                } catch (ex: java.lang.Exception) {
-                    ex.printStackTrace()
-                }
-            }
-            val m_T1 = System.currentTimeMillis()
-            if (m_ErrorCount > 0) fail("checksum sum failure in %d out %d messages", m_ErrorCount, N)
-            val cs: Int = m_Port!!.getDataBits() + 2
-            val actual: Double = m_TotalReceived * cs * 1000.0 / (m_T1 - m_T0)
-            val requested: Int = m_Port!!.getBaudRate()
-            finishedOK("average speed %1.0f b/sec at baud rate %d", actual, requested)
-        } catch (e: Throwable) {
-            println(e)
-        } finally {
-            closePort()
-        }
-    }
-
     fun start() {
-        openPort(m_TestPortName)
         Thread {
-            var m_Done = false
             rnd = Random()
             m_BytesReceived = 0
             m_TotalReceived = 0
@@ -155,26 +103,34 @@ object ATCommandDriver {
             m_RxCount = 0
             m_ErrorCount = 0
             openPort(m_TestPortName)
-
+            loop(115200)
         }.start()
     }
 
-    val eventListener: SerialPortEventListener = SerialPortEventListener { event ->
+    private val eventListener: SerialPortEventListener = SerialPortEventListener { event ->
         try {
             if (event.eventType == SerialPortEvent.DATA_AVAILABLE) {
                 val buffer = ByteArray(m_In.available())
                 val n: Int = m_In.read(buffer)
                 m_TotalReceived += n
                 processBuffer(buffer, n)
+                println(buffer.toString(Charsets.US_ASCII))
                 m_RxCount ++
+                sendNext()
             }
             if (event.eventType == SerialPortEvent.OUTPUT_BUFFER_EMPTY) {
-                val buffer = outQueue.remove().toByteArray(Charsets.US_ASCII)
-                m_Out.write(buffer, 0, buffer.size)
-                m_TxCount++
+                //sendNext()
             }
         } catch (e: java.lang.Exception) {
             e.printStackTrace()
+        }
+    }
+
+    private fun sendNext() {
+        val buffer = outQueue.poll()?.toByteArray(Charsets.US_ASCII)
+        if (buffer != null) {
+            m_Out.write(buffer, 0, buffer.size)
+            m_TxCount++
         }
     }
 
@@ -185,15 +141,18 @@ object ATCommandDriver {
             m_Port!!.setFlowControlMode(SerialPort.FLOWCONTROL_XONXOFF_IN + SerialPort.FLOWCONTROL_XONXOFF_OUT)
             m_Port!!.setSerialPortParams(speed, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE)
             val m_T0 = System.currentTimeMillis()
+            var m_T1 = System.currentTimeMillis()
             m_Port!!.addEventListener(eventListener)
-            while (m_RxCount < N) {
+            sendNext()
+            while (m_TxCount < N && m_T1 < m_T0 + 400_000) {
                 try {
                     Thread.sleep(100)
+                    m_T1 = System.currentTimeMillis()
                 } catch (ex: java.lang.Exception) {
                     ex.printStackTrace()
                 }
             }
-            val m_T1 = System.currentTimeMillis()
+
             if (m_ErrorCount > 0) throw RuntimeException("checksum sum failure in $m_ErrorCount out $N messages")
             val cs: Int = m_Port!!.getDataBits() + 2
             val actual: Double = m_TotalReceived * cs * 1000.0 / (m_T1 - m_T0)

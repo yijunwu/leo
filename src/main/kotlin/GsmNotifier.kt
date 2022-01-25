@@ -69,13 +69,15 @@ object GsmNotifier {
     }
 
     fun notify(number: String, content: String): String {
+
+        ATCommandDriver.outQueue.add("ATE1\n")
+        Thread.sleep(2_000)
+        ATCommandDriver.outQueue.add("AT+COLP=1\n")
+        Thread.sleep(2_000)
+        ATCommandDriver.outQueue.add("ATD$number;\n")
         ATCommandDriver.start()
-        ATCommandDriver.inQueue.add("ATE1\n")
-        Thread.sleep(2_000)
-        ATCommandDriver.inQueue.add("AT+COLP=1\n")
-        Thread.sleep(2_000)
-        ATCommandDriver.inQueue.add("ATD$number;")
         Thread.sleep(30_000)
+        ATCommandDriver.closePort()
         return ""
     }
 
