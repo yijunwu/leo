@@ -12,10 +12,10 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.*
 
-val urlMap: Map<String, String> = sortedMapOf(
+var urlMap: Map<String, String> = sortedMapOf(
 )
 
-val minerAccountSpecs: Map<String, List<Miner>> = mapOf(
+var minerAccountSpecs: Map<String, List<Miner>> = mapOf(
     "hundreds" to listOf(
     ),
     "ktminer" to listOf(
