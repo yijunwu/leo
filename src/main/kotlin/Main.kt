@@ -1,11 +1,16 @@
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
+import java.lang.Exception
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpResponse.BodyHandlers
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.util.*
 
 val urlMap: Map<String, String> = sortedMapOf(
 )
@@ -17,33 +22,91 @@ val minerAccountSpecs: Map<String, List<Miner>> = mapOf(
     )
 )
 
-fun main(args: Array<String>) {
-    println("Hello World!")
+var contact = "13901234567"
 
+fun main(args: Array<String>) {
     // Try adding program arguments via Run/Debug configuration.
     // Learn more about running applications: https://www.jetbrains.com/help/idea/running-applications.html.
     println("Program arguments: ${args.joinToString()}")
 
-    urlMap.keys.forEach { fetchCheckAndAlert(it) }
+    if (args.isNotEmpty()) {
+        configParams(args)
+    }
+
+    while (true) {
+        urlMap.keys.forEach { account ->
+            fetchCheckAndAlert(account)
+            waitForMinutes(1)
+        }
+
+        waitForMinutes(5)
+    }
+}
+
+fun configParams(args: Array<String>) {
+    val configFile: String = if (args.size == 2 && args[0] == "-C") {
+        args[1]
+    } else {
+        return
+    }
+    val mapper = ObjectMapper()
+    val config: JsonNode = mapper.readTree(Files.readAllLines(Paths.get(configFile)).joinToString(""))
+
+    // When
+    val jsonNode1: JsonNode = config.get("contact")
+    contact = jsonNode1.textValue()
+
+    val minerAccountSpecsNode : JsonNode = config.get("minerAccountSpecs")
+
+    val urlMapNode: JsonNode = config.get("urlMap")
+    urlMap = mapper.convertValue(urlMapNode, object: TypeReference<Map<String, String>>(){})
+
+    minerAccountSpecs = mapper.convertValue(minerAccountSpecsNode, object: TypeReference<Map<String, List<Miner>>>(){})
+
+    val miners = (jsonNode1 as? ArrayNode)?.mapIndexed { index, jsonNode ->
+        println("$index, $jsonNode")
+        val miner: Miner = mapper.treeToValue(jsonNode, Miner::class.java)
+        println(miner)
+        miner
+    }
+}
+
+private fun waitForMinutes(minutes: Int) {
+    try {
+        Thread.sleep(1000L)
+        Thread.yield()
+    } catch (ignored: InterruptedException) {
+    }
+
+    try {
+        println("[${Date()}]Waiting for $minutes minute${if (minutes > 1) "s" else ""}...")
+        Thread.sleep(minutes * 60 * 1000L)
+    } catch (ignored: InterruptedException) {
+    }
 }
 
 private fun fetchCheckAndAlert(account: String) {
 
-    val client: HttpClient = HttpClient.newHttpClient()
-    val request = HttpRequest.newBuilder()
-        .uri(URI.create(urlMap[account]!!))
-        //.header("accept", "application/json, text/javascript, */*; q=0.01")
-        //.header("referer","https://www.f2pool.com/mining-user-eth/c2f2a494800ce54d722cf95b77aa2ed4")
-        //.header("authority", "www.f2pool.com")
-        .header("x-requested-with", "XMLHttpRequest").build()
-    client.sendAsync(request, BodyHandlers.ofString())
-        .thenApply { obj: HttpResponse<*> -> obj.body() }
-        //.thenApply(System.out::println)
-        .thenApply { body -> getMinerData(body as? String) }
-        .thenApply { minerList ->
-            checkAndAlert(minerList ?: emptyList(), minerAccountSpecs[account]?.associateBy { it.name } ?: emptyMap())
-        }
-        .join()
+    try {
+        val client: HttpClient = HttpClient.newHttpClient()
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(urlMap[account]!!))
+            //.header("accept", "application/json, text/javascript, */*; q=0.01")
+            //.header("referer","https://www.f2pool.com/mining-user-eth/c2f2a494800ce54d722cf95b77aa2ed4")
+            //.header("authority", "www.f2pool.com")
+            .header("x-requested-with", "XMLHttpRequest").build()
+        client.sendAsync(request, BodyHandlers.ofString())
+            .thenApply { obj: HttpResponse<*> -> obj.body() }
+            //.thenApply(System.out::println)
+            .thenApply { body -> getMinerData(body as? String) }
+            .thenApply { minerList ->
+                checkAndAlert(minerList ?: emptyList(), minerAccountSpecs[account]?.associateBy { it.name } ?: emptyMap())
+            }.join()
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+
+
 }
 
 
@@ -51,8 +114,9 @@ fun checkAndAlert(minerList: List<Miner>, expected: Map<String, Miner>) {
     if (false) { alertByAliyun() }
 
     if (minerList.size < expected.size
-        || minerList.any { miner -> miner.hashrate?.toDoubleOrNull()?.let { it < 20.0 } == true }) {
-        GsmNotifier.notify("13901658165", "")
+        || minerList.filter { it.name in expected.keys }
+            .any { miner -> miner.hashrate?.toDoubleOrNull()?.let { it < 20.0 } == true }) {
+        GsmNotifier.notify(contact, "")
     }
 }
 
@@ -81,20 +145,25 @@ private fun alertByAliyun() {
 }
 
 fun getMinerData(json: String?): List<Miner> {
-    val jsonString = json ?: """{\"k1":"v1","k2":"v2"}"""
-    val mapper: ObjectMapper = ObjectMapper()
-    val actualObj: JsonNode = mapper.readTree(jsonString)
+    json ?: return emptyList()
 
-    // When
-    val jsonNode1: JsonNode = actualObj.get("data")
-    println(jsonNode1.textValue())
-    val miners = (jsonNode1 as? ArrayNode)?.mapIndexed { index, jsonNode ->
-        println("$index, $jsonNode")
-        val miner: Miner = mapper.treeToValue(jsonNode, Miner::class.java)
-        println(miner)
-        miner
-    }
+    return try {
+        val mapper = ObjectMapper()
+        val actualObj: JsonNode = mapper.readTree(json)
 
-    return miners ?: emptyList()
+        // When
+        val jsonNode1: JsonNode = actualObj.get("data")
+        println(jsonNode1.textValue())
+        val miners = (jsonNode1 as? ArrayNode)?.mapIndexed { index, jsonNode ->
+            println("$index, $jsonNode")
+            val miner: Miner = mapper.treeToValue(jsonNode, Miner::class.java)
+            println(miner)
+            miner
+        }
+        miners
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    } ?: emptyList()
 }
 

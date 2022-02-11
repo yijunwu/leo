@@ -75,9 +75,18 @@ object GsmNotifier {
         ATCommandDriver.outQueue.add("AT+COLP=1\n")
         Thread.sleep(2_000)
         ATCommandDriver.outQueue.add("ATD$number;\n")
-        ATCommandDriver.start()
-        Thread.sleep(30_000)
-        ATCommandDriver.closePort()
+        try {
+            ATCommandDriver.start()
+            Thread.sleep(20_000)
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        } finally {
+            try {
+                ATCommandDriver.closePort()
+            } catch (e: Throwable) {
+                e.printStackTrace()
+            }
+        }
         return ""
     }
 
